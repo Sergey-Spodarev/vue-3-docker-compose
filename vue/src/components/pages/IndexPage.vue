@@ -5,7 +5,27 @@
 
       <div v-if="isWin" class="puzzle__win">ПОБЕДА!</div>
 
-      <div class="puzzle__status">Ходы: {{ moves }}</div>
+      <div class="puzzle__stats">
+        <div class="puzzle__stat">
+          <span class="puzzle__stat-label">Ходы:</span>
+          <span class="puzzle__stat-value">{{ moves }}</span>
+        </div>
+
+        <div class="puzzle__stat">
+          <span class="puzzle__stat-label">Время:</span>
+          <span class="puzzle__stat-value">{{ formatTimeDisplay }}</span>
+        </div>
+
+        <div class="puzzle__stat" v-if="recordTime">
+          <span class="puzzle__stat-label">Рекорд:</span>
+          <span class="puzzle__stat-value puzzle__stat-value--record">{{ recordTimeDisplay }}</span>
+        </div>
+
+        <div class="puzzle__stat puzzle__stat--special" v-if="specialMoves > 0">
+          <span class="puzzle__stat-label">Спец-ходы:</span>
+          <span class="puzzle__stat-value puzzle__stat-value--special">{{ specialMoves }}</span>
+        </div>
+      </div>
 
       <div class="puzzle__board" :style="boardStyle">
         <PuzzleTile
@@ -14,7 +34,9 @@
             :value="tile.value"
             :is-empty="tile.isEmpty"
             :is-win="isWin"
+            :is-blocked="tile.isBlocked"
             :tile-style="tileStyle"
+            :allow-any-move="specialMoves > 0"
             @click="() => handleTileClick(tile.index)"
         />
       </div>
@@ -30,7 +52,7 @@
 
         <button
             class="puzzle__restart"
-            @click="() => initGame()"
+            @click="() => restartGame()"
         >
           Перемешать
         </button>
@@ -42,11 +64,16 @@
           +
         </button>
       </div>
+
+      <div v-if="specialMoves > 0" class="puzzle__hint">
+        💥 Спец-ход доступен! Кликните на любую плитку
+      </div>
     </div>
   </div>
 </template>
 
 <script>
+import { mapGetters } from 'vuex'
 import PuzzleTile from './PuzzleTile.vue'
 
 export default {
@@ -56,26 +83,20 @@ export default {
   },
   data() {
     return {
-      gridSize: 4,
-      minGridSize: 3,
-      tiles: [],
-      moves: 0,
+      timerInterval: null,
+      specialMoveInterval: null,
     }
   },
   computed: {
-    isWin() {
-      return this.checkWin()
-    },
-
-    tileList() {
-      return this.tiles.map((value, index) => {
-        return {
-          index: index,
-          value: value,
-          isEmpty: value === 0,
-        }
-      })
-    },
+    ...mapGetters('puzzle', [
+      'gridSize',
+      'moves',
+      'timer',
+      'specialMoves',
+      'isWin',
+      'tileList',
+      'recordTime',
+    ]),
 
     boardStyle() {
       return {
@@ -96,109 +117,82 @@ export default {
         fontSize: `${fontSize}px`,
       }
     },
+
+    formatTimeDisplay() {
+      const mins = Math.floor(this.timer / 60)
+      const secs = this.timer % 60
+      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    },
+
+    recordTimeDisplay() {
+      if (this.recordTime) {
+        const mins = Math.floor(this.recordTime / 60)
+        const secs = this.recordTime % 60
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+      }
+      return null
+    },
   },
   methods: {
-    checkWin() {
-      const total = this.gridSize * this.gridSize
+    ...mapActions('puzzle', [
+      'initGame',
+      'shuffleBoard',
+      'handleTileClick',
+      'changeGridSize',
+    ]),
 
-      for (let i = 0; i < total; i++) {
-        const expectedValue = (i < total - 1) ? (i + 1) : 0
-
-        if (this.tiles[i] !== expectedValue) {
-          return false
-        }
-      }
-
-      return true
+    restartGame() {
+      this.initGame()
+      setTimeout(() => {
+        this.shuffleBoard()
+      }, 50)
     },
 
     changeSize(delta) {
       const newSize = this.gridSize + delta
 
-      if (newSize >= this.minGridSize) {
-        this.gridSize = newSize
-        this.initGame()
+      if (newSize >= 3) {
+        this.changeGridSize(newSize)
+        this.restartGame()
       }
     },
 
-    initGame() {
-      this.moves = 0
-
-      const total = this.gridSize * this.gridSize
-
-      this.tiles = Array.from(
-          { length: total },
-          (_, i) => {
-            return (i + 1) % total
-          }
-      )
-
-      this.shuffleBoard()
+    startTimer() {
+      this.stopTimer()
+      this.timerInterval = setInterval(() => {
+        this.$store.commit('puzzle/INCREMENT_TIMER')
+      }, 1000)
     },
 
-    shuffleBoard() {
-      let previousIndex = -1
-      const shuffleMoves = this.gridSize * this.gridSize * 10
-
-      for (let i = 0; i < shuffleMoves; i++) {
-        const emptyIndex = this.tiles.indexOf(0)
-        const neighbors = this.getNeighbors(emptyIndex)
-        const validNeighbors = neighbors.filter((n) => {
-          return n !== previousIndex
-        })
-        const randomNeighbor = validNeighbors[Math.floor(Math.random() * validNeighbors.length)]
-
-        this.swapTiles(emptyIndex, randomNeighbor)
-        previousIndex = emptyIndex
+    stopTimer() {
+      if (this.timerInterval) {
+        clearInterval(this.timerInterval)
+        this.timerInterval = null
       }
     },
 
-    getNeighbors(index) {
-      const neighbors = []
-      const row = Math.floor(index / this.gridSize)
-      const col = index % this.gridSize
-
-      if (row > 0) {
-        neighbors.push(index - this.gridSize)
-      }
-
-      if (row < this.gridSize - 1) {
-        neighbors.push(index + this.gridSize)
-      }
-
-      if (col > 0) {
-        neighbors.push(index - 1)
-      }
-
-      if (col < this.gridSize - 1) {
-        neighbors.push(index + 1)
-      }
-
-      return neighbors
+    startSpecialMoveTimer() {
+      this.stopSpecialMoveTimer()
+      this.specialMoveInterval = setInterval(() => {
+        this.$store.commit('puzzle/INCREMENT_SPECIAL_MOVES')
+      }, 60000)
     },
 
-    handleTileClick(index) {
-      if (this.isWin) {
-        return
+    stopSpecialMoveTimer() {
+      if (this.specialMoveInterval) {
+        clearInterval(this.specialMoveInterval)
+        this.specialMoveInterval = null
       }
-
-      const emptyIndex = this.tiles.indexOf(0)
-      const neighbors = this.getNeighbors(emptyIndex)
-
-      if (neighbors.includes(index)) {
-        this.swapTiles(emptyIndex, index)
-        this.moves++
-      }
-    },
-
-    swapTiles(idx1, idx2) {
-      const temp = this.tiles[idx1]
-      this.tiles[idx1] = this.tiles[idx2]
-      this.tiles[idx2] = temp
     },
   },
   mounted() {
-    this.initGame()
+    this.restartGame()
+    this.startTimer()
+    this.startSpecialMoveTimer()
+  },
+  beforeUnmount() {
+    this.stopTimer()
+    this.stopSpecialMoveTimer()
   },
 }
 </script>
@@ -230,12 +224,47 @@ export default {
     font-family: sans-serif;
   }
 
-  &__status {
-    color: #888;
-    font-size: 18px;
-    font-weight: bold;
+  &__stats {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
     margin-bottom: 20px;
-    font-family: sans-serif;
+    flex-wrap: wrap;
+  }
+
+  &__stat {
+    background: #222;
+    padding: 10px 15px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+
+    &--special {
+      background: #4CAF50;
+      animation: pulse 2s infinite;
+    }
+  }
+
+  &__stat-label {
+    color: #888;
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+
+  &__stat-value {
+    color: #fff;
+    font-size: 20px;
+    font-weight: bold;
+
+    &--record {
+      color: #FFD700;
+    }
+
+    &--special {
+      color: #fff;
+      font-size: 24px;
+    }
   }
 
   &__win {
@@ -289,6 +318,37 @@ export default {
       cursor: not-allowed;
     }
   }
+
+  &__hint {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 15px 25px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    margin-top: 15px;
+    animation: glow 1.5s ease-in-out infinite;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+}
+
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(102, 126, 234, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(102, 126, 234, 0.8);
+  }
 }
 
 @media (max-width: 500px) {
@@ -299,7 +359,15 @@ export default {
       font-size: 28px;
     }
 
-    &__status {
+    &__stats {
+      gap: 10px;
+    }
+
+    &__stat {
+      padding: 8px 12px;
+    }
+
+    &__stat-value {
       font-size: 16px;
     }
 
