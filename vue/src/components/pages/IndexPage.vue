@@ -1,5 +1,5 @@
 <template>
-  <div class="puzzle">
+  <div class="puzzle" @touchstart="() => handleTouchStart($event)" @touchend="() => handleTouchEnd($event)">
     <div class="puzzle__content">
       <h2 class="puzzle__title">Пятнашки {{ gridSize }}×{{ gridSize }}</h2>
 
@@ -14,6 +14,21 @@
         <div class="puzzle__stat">
           <span class="puzzle__stat-label">Время:</span>
           <span class="puzzle__stat-value">{{ formatTimeDisplay }}</span>
+        </div>
+
+        <div class="puzzle__stat" v-if="penaltyTime > 0">
+          <span class="puzzle__stat-label">Штраф:</span>
+          <span class="puzzle__stat-value puzzle__stat-value--penalty">+{{ penaltyTime }}с</span>
+        </div>
+
+        <div class="puzzle__stat" v-if="bonusTime > 0">
+          <span class="puzzle__stat-label">Бонус:</span>
+          <span class="puzzle__stat-value puzzle__stat-value--bonus">-{{ bonusTime }}с</span>
+        </div>
+
+        <div class="puzzle__stat" v-if="isFastTimer">
+          <span class="puzzle__stat-label">Ускорение:</span>
+          <span class="puzzle__stat-value puzzle__stat-value--fast">2x</span>
         </div>
 
         <div class="puzzle__stat" v-if="recordTime">
@@ -35,6 +50,7 @@
             :is-empty="tile.isEmpty"
             :is-win="isWin"
             :is-blocked="tile.isBlocked"
+            :is-frozen="tile.isFrozen"
             :tile-style="tileStyle"
             :allow-any-move="specialMoves > 0"
             @click="() => handleTileClick(tile.index)"
@@ -68,12 +84,16 @@
       <div v-if="specialMoves > 0" class="puzzle__hint">
         💥 Спец-ход доступен! Кликните на любую плитку
       </div>
+
+      <div v-if="isFastTimer" class="puzzle__hint puzzle__hint--fast">
+        ⚡ Бездействие! Таймер ускорен
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import { mapGetters } from 'vuex'
+import { mapGetters, mapActions } from 'vuex'
 import PuzzleTile from './PuzzleTile.vue'
 
 export default {
@@ -83,8 +103,8 @@ export default {
   },
   data() {
     return {
-      timerInterval: null,
-      specialMoveInterval: null,
+      touchStartX: 0,
+      touchStartY: 0,
     }
   },
   computed: {
@@ -96,12 +116,18 @@ export default {
       'isWin',
       'tileList',
       'recordTime',
+      'penaltyTime',
+      'bonusTime',
+      'isFastTimer',
+      'displayTime',
     ]),
 
     boardStyle() {
       return {
         'grid-template-columns': `repeat(${this.gridSize}, 1fr)`,
         'grid-template-rows': `repeat(${this.gridSize}, 1fr)`,
+        'width': `${this.gridSize * 80}px`,
+        'height': `${this.gridSize * 80}px`,
       }
     },
 
@@ -119,8 +145,8 @@ export default {
     },
 
     formatTimeDisplay() {
-      const mins = Math.floor(this.timer / 60)
-      const secs = this.timer % 60
+      const mins = Math.floor(this.displayTime / 60)
+      const secs = this.displayTime % 60
       return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
     },
 
@@ -139,12 +165,16 @@ export default {
       'shuffleBoard',
       'handleTileClick',
       'changeGridSize',
+      'handleSwipe',
+      'startTimers',
+      'stopTimers',
     ]),
 
     restartGame() {
       this.initGame()
       setTimeout(() => {
         this.shuffleBoard()
+        this.startTimers()
       }, 50)
     },
 
@@ -157,42 +187,42 @@ export default {
       }
     },
 
-    startTimer() {
-      this.stopTimer()
-      this.timerInterval = setInterval(() => {
-        this.$store.commit('puzzle/INCREMENT_TIMER')
-      }, 1000)
+    handleTouchStart(event) {
+      this.touchStartX = event.touches[0].clientX
+      this.touchStartY = event.touches[0].clientY
     },
 
-    stopTimer() {
-      if (this.timerInterval) {
-        clearInterval(this.timerInterval)
-        this.timerInterval = null
-      }
-    },
+    handleTouchEnd(event) {
+      const touchEndX = event.changedTouches[0].clientX
+      const touchEndY = event.changedTouches[0].clientY
+      const diffX = touchEndX - this.touchStartX
+      const diffY = touchEndY - this.touchStartY
+      const minSwipeDistance = 50
 
-    startSpecialMoveTimer() {
-      this.stopSpecialMoveTimer()
-      this.specialMoveInterval = setInterval(() => {
-        this.$store.commit('puzzle/INCREMENT_SPECIAL_MOVES')
-      }, 60000)
-    },
-
-    stopSpecialMoveTimer() {
-      if (this.specialMoveInterval) {
-        clearInterval(this.specialMoveInterval)
-        this.specialMoveInterval = null
+      if (Math.abs(diffX) > Math.abs(diffY)) {
+        if (Math.abs(diffX) > minSwipeDistance) {
+          if (diffX > 0) {
+            this.handleSwipe('right')
+          } else {
+            this.handleSwipe('left')
+          }
+        }
+      } else {
+        if (Math.abs(diffY) > minSwipeDistance) {
+          if (diffY > 0) {
+            this.handleSwipe('down')
+          } else {
+            this.handleSwipe('up')
+          }
+        }
       }
     },
   },
   mounted() {
     this.restartGame()
-    this.startTimer()
-    this.startSpecialMoveTimer()
   },
   beforeUnmount() {
-    this.stopTimer()
-    this.stopSpecialMoveTimer()
+    this.stopTimers()
   },
 }
 </script>
@@ -210,6 +240,39 @@ export default {
   justify-content: center;
   padding: 20px;
   box-sizing: border-box;
+  touch-action: none;
+
+  @media (max-width: 500px) {
+    padding: 15px;
+
+    .puzzle__title {
+      font-size: 28px;
+    }
+
+    .puzzle__stats {
+      gap: 10px;
+    }
+
+    .puzzle__stat {
+      padding: 8px 12px;
+    }
+
+    .puzzle__stat-value {
+      font-size: 16px;
+    }
+
+    .puzzle__restart,
+    .puzzle__button {
+      padding: 10px 30px;
+      font-size: 14px;
+    }
+  }
+
+  @media (max-width: 350px) {
+    .puzzle__title {
+      font-size: 24px;
+    }
+  }
 
   &__content {
     text-align: center;
@@ -227,7 +290,7 @@ export default {
   &__stats {
     display: flex;
     justify-content: center;
-    gap: 20px;
+    gap: 15px;
     margin-bottom: 20px;
     flex-wrap: wrap;
   }
@@ -265,6 +328,19 @@ export default {
       color: #fff;
       font-size: 24px;
     }
+
+    &--penalty {
+      color: #ff4444;
+    }
+
+    &--bonus {
+      color: #4CAF50;
+    }
+
+    &--fast {
+      color: #ff9800;
+      animation: pulse 0.5s infinite;
+    }
   }
 
   &__win {
@@ -275,12 +351,13 @@ export default {
   }
 
   &__board {
-    display: inline-grid;
+    display: grid;
     gap: 3px;
     margin: 0 auto 30px;
     background-color: #222;
     padding: 3px;
     border-radius: 8px;
+    width: fit-content;
   }
 
   &__controls {
@@ -328,6 +405,10 @@ export default {
     font-weight: bold;
     margin-top: 15px;
     animation: glow 1.5s ease-in-out infinite;
+
+    &--fast {
+      background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%);
+    }
   }
 }
 
@@ -348,42 +429,6 @@ export default {
   }
   50% {
     box-shadow: 0 0 20px rgba(102, 126, 234, 0.8);
-  }
-}
-
-@media (max-width: 500px) {
-  .puzzle {
-    padding: 15px;
-
-    &__title {
-      font-size: 28px;
-    }
-
-    &__stats {
-      gap: 10px;
-    }
-
-    &__stat {
-      padding: 8px 12px;
-    }
-
-    &__stat-value {
-      font-size: 16px;
-    }
-
-    &__restart,
-    &__button {
-      padding: 10px 30px;
-      font-size: 14px;
-    }
-  }
-}
-
-@media (max-width: 350px) {
-  .puzzle {
-    &__title {
-      font-size: 24px;
-    }
   }
 }
 </style>
